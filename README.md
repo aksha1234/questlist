@@ -1,14 +1,14 @@
 # QuestList
 
-QuestList is a calm, fantasy-quest-inspired to-do and focus app. Break a broad goal into editable steps, complete tasks, run focused Pomodoro sessions, and unlock gentle reward prompts. Everything stays in your browser's local storage—there are no accounts or API keys.
+QuestList is a calm, fantasy-quest-inspired to-do and focus app. It can turn a broad goal into an individualized AI plan, track editable tasks, run focused Pomodoro sessions, and unlock gentle reward prompts. Quests stay in your browser's local storage and there are no accounts.
 
 ## How planning works
 
-QuestList does not pretend to call an AI service. Enter a broad goal, choose how much time you typically have for one sitting, and optionally add a deadline. One click immediately creates a complete, ordered quest—there are no setup questions or required editing steps.
+Enter a broad goal, choose how much time you typically have for one sitting, and optionally add a deadline. One click requests a concrete, ordered plan from the server-side AI provider. Every task includes estimated minutes, an effort/importance-based point value, and a suggested focus-session breakdown. Each quest clearly says whether it was **AI planned** or created by the **Offline fallback**.
 
-Its offline planner recognizes common intent categories—including learning, travel, events, writing, organization, fitness, career changes, and building or launching something—and turns each into small, completable steps. A practical generic plan handles other goals. Every task includes estimated minutes, an effort/importance-based point value, and a suggested focus-session breakdown based on the available-time choice. Each quest summarizes its total time, sessions, points, and distance to the next reward. Task titles remain editable after creation, but editing is optional.
+If the server has no API key, the model request fails, or returned data is invalid, QuestList automatically uses its deterministic offline planner. That fallback recognizes common intent categories and has a practical generic plan for other goals. It is never presented as AI. Task titles remain editable after creation, but editing is optional.
 
-The planner is behind a small provider interface so a configured AI implementation can be added later without changing the UI or saved task shape. Put any model call behind a server endpoint; never ship a provider API key in this browser bundle. The endpoint should authenticate the user if needed, validate and rate-limit input, request structured JSON containing short task titles, minutes, and bounded point values, validate that response against a schema, and fall back to the current deterministic planner on timeout or error. Avoid sending stored quests unless the user explicitly chooses to include them.
+The AI provider runs only in the Node server. The API key and model name are read from server environment variables and are never included in browser code or local storage. The server validates and rate-limits requests, asks for schema-constrained output, and validates the response again. Only the current goal, available minutes, and optional deadline are sent to OpenAI; saved quests and focus history are not sent.
 
 ## Focus audio
 
@@ -23,7 +23,15 @@ npm install
 npm run dev
 ```
 
-Open the local URL printed by Vite (usually `http://localhost:5173`).
+Without AI configuration, the app runs normally and labels generated plans as offline fallback. To enable AI planning, copy the example environment file and add your own API key:
+
+```bash
+cp .env.example .env
+# Edit .env and set OPENAI_API_KEY
+npm run dev
+```
+
+`npm run dev` starts the Vite frontend and local API server together. Open the local URL printed by Vite (usually `http://localhost:5173`). The default model can be changed only on the server with `OPENAI_MODEL`; restart the development process after environment changes. Never commit `.env`.
 
 ## Production build
 

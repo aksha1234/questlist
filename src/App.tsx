@@ -5,10 +5,11 @@ import {
 } from 'lucide-react'
 
 type Task = { id: string; title: string; done: boolean; points: number; minutes: number; sessions: number }
-type Quest = { id: string; title: string; tasks: Task[]; createdAt: number; deadline?: string; availableMinutes?: number }
+type PlanSource = 'ai' | 'offline'
+type Quest = { id: string; title: string; tasks: Task[]; createdAt: number; deadline?: string; availableMinutes?: number; planSource?: PlanSource }
 type PlannedTask = { title: string; points: number; minutes: number }
 type PlanRequest = { goal: string; availableMinutes: number; deadline?: string }
-type PlannerProvider = { plan: (request: PlanRequest) => PlannedTask[] }
+type PlannerProvider = { plan: (request: PlanRequest) => Promise<PlannedTask[]> }
 type Ambience = 'none' | 'rain' | 'instrumental'
 type StoredState = { quests: Quest[]; points: number; claimedRewards: number[]; ambience: Ambience; volume: number }
 
@@ -77,16 +78,48 @@ function breakdown(goal: string): PlannedTask[] {
 // A provider boundary keeps offline planning reliable today and makes a validated
 // server-backed provider replaceable later without changing the UI or stored plan shape.
 const offlinePlanner: PlannerProvider = {
-  plan: ({ goal }) => breakdown(goal),
+  plan: async ({ goal }) => breakdown(goal),
 }
 
-function createPlan(request: PlanRequest, provider: PlannerProvider = offlinePlanner): Task[] {
+function isValidTask(task: unknown): task is PlannedTask {
+  if (!task || typeof task !== 'object') return false
+  const value = task as Record<string, unknown>
+  return typeof value.title === 'string' && value.title.trim().length >= 3 && value.title.length <= 140
+    && Number.isInteger(value.minutes) && Number(value.minutes) >= 5 && Number(value.minutes) <= 180
+    && Number.isInteger(value.points) && Number(value.points) >= 5 && Number(value.points) <= 25
+}
+
+const aiPlanner: PlannerProvider = {
+  async plan(request) {
+    const response = await fetch('/api/plan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    })
+    if (!response.ok) throw new Error('AI planner unavailable')
+    const payload: unknown = await response.json()
+    if (!payload || typeof payload !== 'object' || (payload as { source?: unknown }).source !== 'ai') throw new Error('Unexpected planner response')
+    const tasks = (payload as { tasks?: unknown }).tasks
+    if (!Array.isArray(tasks) || tasks.length < 4 || tasks.length > 12 || !tasks.every(isValidTask)) throw new Error('Invalid AI plan')
+    return tasks
+  },
+}
+
+async function createPlan(request: PlanRequest): Promise<{ tasks: Task[]; source: PlanSource }> {
   const sessionLength = Math.min(25, request.availableMinutes)
   let planned: PlannedTask[] = []
-  try { planned = provider.plan(request) } catch { planned = [] }
-  const valid = planned.filter(task => task && task.title?.trim() && Number.isFinite(task.minutes) && Number.isFinite(task.points))
-  const resilientPlan = valid.length >= 3 ? valid : breakdown(request.goal)
-  return resilientPlan.map(task => ({
+  let source: PlanSource = 'ai'
+  try { planned = await aiPlanner.plan(request) } catch {
+    source = 'offline'
+    planned = await offlinePlanner.plan(request)
+  }
+  const valid = planned.filter(isValidTask)
+  if (valid.length < 3) {
+    source = 'offline'
+    planned = breakdown(request.goal)
+  }
+  const resilientPlan = planned.filter(isValidTask)
+  const tasks = resilientPlan.map(task => ({
     ...task,
     title: task.title.trim(),
     minutes: Math.max(5, Math.round(task.minutes / 5) * 5),
@@ -95,6 +128,7 @@ function createPlan(request: PlanRequest, provider: PlannerProvider = offlinePla
     done: false,
     sessions: Math.max(1, Math.ceil(task.minutes / sessionLength)),
   }))
+  return { tasks, source }
 }
 
 function loadState(): StoredState {
@@ -118,6 +152,7 @@ export default function App() {
   const [recentQuestId, setRecentQuestId] = useState<string | null>(null)
   const [celebratingReward, setCelebratingReward] = useState<number | null>(null)
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null)
+  const [planning, setPlanning] = useState(false)
   const [seconds, setSeconds] = useState(FOCUS_MINUTES * 60)
   const [timerRunning, setTimerRunning] = useState(false)
   const [timerComplete, setTimerComplete] = useState(false)
@@ -155,18 +190,22 @@ export default function App() {
   const completed = quests.reduce((n, q) => n + q.tasks.filter(t => t.done).length, 0)
   const total = quests.reduce((n, q) => n + q.tasks.length, 0)
   const nextReward = REWARDS.find(r => r.points > points)
+  const recentQuest = quests.find(quest => quest.id === recentQuestId)
 
-  function createQuest(e: FormEvent) {
+  async function createQuest(e: FormEvent) {
     e.preventDefault()
-    if (!goal.trim()) return
+    if (!goal.trim() || planning) return
+    setPlanning(true)
     const request = { goal: goal.trim(), availableMinutes, deadline: deadline || undefined }
-    const tasks = createPlan(request)
-    const questId = uid()
-    setQuests(q => [{ id: questId, title: request.goal, tasks, createdAt: Date.now(), deadline: request.deadline, availableMinutes }, ...q])
-    setRecentQuestId(questId)
-    setGoal('')
-    setDeadline('')
-    window.setTimeout(() => document.getElementById('quests')?.scrollIntoView({ behavior: 'smooth' }), 50)
+    try {
+      const { tasks, source } = await createPlan(request)
+      const questId = uid()
+      setQuests(q => [{ id: questId, title: request.goal, tasks, createdAt: Date.now(), deadline: request.deadline, availableMinutes, planSource: source }, ...q])
+      setRecentQuestId(questId)
+      setGoal('')
+      setDeadline('')
+      window.setTimeout(() => document.getElementById('quests')?.scrollIntoView({ behavior: 'smooth' }), 50)
+    } finally { setPlanning(false) }
   }
 
   function toggleTask(questId: string, taskId: string) {
@@ -268,7 +307,7 @@ export default function App() {
             <div className="plan-options">
               <label><Clock3 size={15}/><span>Time available</span><select value={availableMinutes} onChange={e => setAvailableMinutes(Number(e.target.value))} aria-label="Time available per session"><option value="15">15 min at a time</option><option value="25">25 min at a time</option><option value="45">45 min at a time</option><option value="60">1 hour at a time</option></select></label>
               <label><CalendarDays size={15}/><span>Deadline <small>optional</small></span><input type="date" value={deadline} min={new Date().toISOString().slice(0,10)} onChange={e => setDeadline(e.target.value)}/></label>
-              <button className="primary" type="submit">Create my plan <ChevronRight size={18}/></button>
+              <button className="primary" type="submit" disabled={planning}>{planning ? <><span className="planning-spinner"/> Creating your plan…</> : <>Create my plan <ChevronRight size={18}/></>}</button>
             </div>
             <p className="privacy"><Leaf size={13}/> One click creates your complete plan. You can edit anything later.</p>
           </form>
@@ -276,7 +315,7 @@ export default function App() {
 
         <section className="content-section" id="quests">
           <div className="section-heading"><div><span className="kicker">Your path</span><h2>Active quests</h2></div>{total > 0 && <p><strong>{completed}</strong> of {total} steps complete</p>}</div>
-          {recentQuestId && <div className="plan-created" role="status"><Check size={17}/><div><strong>Your plan is ready.</strong><span>Start with step one—everything else can wait.</span></div></div>}
+          {recentQuest && <div className="plan-created" role="status"><Check size={17}/><div><strong>Your plan is ready.</strong><span>{recentQuest.planSource === 'ai' ? 'Created with AI from your goal, time, and deadline.' : 'AI was unavailable, so QuestList used its offline planning fallback.'} Start with step one—everything else can wait.</span></div></div>}
           {quests.length === 0 ? (
             <div className="empty-state"><div className="empty-icon"><Leaf size={24}/></div><h3>Your path is open</h3><p>Describe a goal above and your first quest will take shape here.</p></div>
           ) : <div className="quest-grid">{quests.map(quest => {
@@ -286,7 +325,7 @@ export default function App() {
             const questPoints = quest.tasks.reduce((sum, task) => sum + task.points, 0)
             const milestone = REWARDS.find(reward => reward.points > points)
             return <article className={`quest-card ${quest.id === recentQuestId ? 'new-plan' : ''}`} key={quest.id}>
-              <div className="quest-title"><div><span className="kicker">Ready-to-follow plan</span><h3>{quest.title}</h3>{quest.deadline && <p className="deadline">Aim to finish by {new Date(`${quest.deadline}T00:00:00`).toLocaleDateString(undefined,{month:'short',day:'numeric'})}</p>}</div><span className="progress-number">{done}/{quest.tasks.length}</span></div>
+              <div className="quest-title"><div><div className="quest-labels"><span className="kicker">Ready-to-follow plan</span>{quest.planSource && <span className={`source-badge ${quest.planSource}`}>{quest.planSource === 'ai' ? 'AI planned' : 'Offline fallback'}</span>}</div><h3>{quest.title}</h3>{quest.deadline && <p className="deadline">Aim to finish by {new Date(`${quest.deadline}T00:00:00`).toLocaleDateString(undefined,{month:'short',day:'numeric'})}</p>}</div><span className="progress-number">{done}/{quest.tasks.length}</span></div>
               <div className="plan-summary" aria-label="Plan summary"><div><strong>{questMinutes < 60 ? `${questMinutes}m` : `${Math.floor(questMinutes/60)}h${questMinutes%60 ? ` ${questMinutes%60}m` : ''}`}</strong><span>estimated</span></div><div><strong>{questSessions}</strong><span>sessions</span></div><div><strong>{questPoints}</strong><span>points</span></div><div><strong>{milestone ? `${Math.max(0,milestone.points-points)} pts` : 'All'}</strong><span>{milestone ? 'to reward' : 'rewards reached'}</span></div></div>
               <div className="progress-track"><span style={{width: `${quest.tasks.length ? done / quest.tasks.length * 100 : 0}%`}}/></div>
               <div className="task-list">{quest.tasks.map(task => <div className={`task ${task.done ? 'done' : ''}`} key={task.id}>
