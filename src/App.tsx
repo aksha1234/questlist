@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CalendarDays, Check, ChevronRight, Circle, Clock3, Coffee, Edit3, Flame, Leaf, Pause,
-  Music2, Play, Plus, RotateCcw, Sparkles, Utensils, Volume2, WandSparkles
+  Music2, Play, Plus, RotateCcw, Sparkles, Trash2, Utensils, Volume2, WandSparkles
 } from 'lucide-react'
 
 type Task = { id: string; title: string; done: boolean; points: number; minutes: number; sessions: number }
@@ -10,15 +10,15 @@ type Quest = { id: string; title: string; tasks: Task[]; createdAt: number; dead
 type PlannedTask = { title: string; points: number; minutes: number }
 type PlanRequest = { goal: string; availableMinutes: number; deadline?: string }
 type PlannerProvider = { plan: (request: PlanRequest) => Promise<PlannedTask[]> }
-type Ambience = 'none' | 'rain' | 'instrumental'
+type Ambience = 'none' | 'pad' | 'chimes'
 type StoredState = { quests: Quest[]; points: number; claimedRewards: number[]; ambience: Ambience; volume: number }
 
 const STORAGE_KEY = 'questlist-state-v1'
 const FOCUS_MINUTES = 25
 const REWARDS = [
   { points: 30, title: 'A proper coffee break', note: 'Step away and enjoy it slowly.', icon: Coffee },
-  { points: 75, title: 'Dinner, your choice', note: 'Choose something you genuinely love.', icon: Utensils },
-  { points: 150, title: 'A weekend outing', note: 'Plan a small adventure beyond the usual.', icon: Sparkles },
+  { points: 60, title: 'Dinner, your choice', note: 'Choose something you genuinely love.', icon: Utensils },
+  { points: 100, title: 'A weekend outing', note: 'Plan a small adventure beyond the usual.', icon: Sparkles },
 ]
 
 function steps(items: [string, number][]): PlannedTask[] {
@@ -134,7 +134,12 @@ async function createPlan(request: PlanRequest): Promise<{ tasks: Task[]; source
 function loadState(): StoredState {
   try {
     const stored = localStorage.getItem(STORAGE_KEY)
-    if (stored) return { ambience: 'none', volume: .35, ...JSON.parse(stored) }
+    if (stored) {
+      const parsed = JSON.parse(stored)
+      const saved = parsed.ambience
+      const ambience: Ambience = saved === 'instrumental' ? 'pad' : saved === 'pad' || saved === 'chimes' ? saved : 'none'
+      return { volume: .35, ...parsed, ambience }
+    }
   } catch { /* start fresh if local storage is unavailable */ }
   return { quests: [], points: 0, claimedRewards: [], ambience: 'none', volume: .35 }
 }
@@ -159,7 +164,7 @@ export default function App() {
   const [ambience, setAmbience] = useState<Ambience>(initial.ambience)
   const [volume, setVolume] = useState(initial.volume)
   const timerRef = useRef<number | null>(null)
-  const audioRef = useRef<{ context: AudioContext; gain: GainNode; nodes: AudioScheduledSourceNode[] } | null>(null)
+  const audioRef = useRef<{ context: AudioContext; gain: GainNode; nodes: AudioScheduledSourceNode[]; timers: number[] } | null>(null)
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ quests, points, claimedRewards, ambience, volume }))
@@ -230,6 +235,13 @@ export default function App() {
       : q))
   }
 
+  function deleteQuest(quest: Quest) {
+    if (!window.confirm(`Delete “${quest.title}”? Your earned points will stay.`)) return
+    setQuests(current => current.filter(item => item.id !== quest.id))
+    if (recentQuestId === quest.id) setRecentQuestId(null)
+    setEditingTaskId(null)
+  }
+
   function resetTimer() {
     stopAmbience()
     setTimerRunning(false); setSeconds(FOCUS_MINUTES * 60); setTimerComplete(false)
@@ -238,6 +250,7 @@ export default function App() {
   function stopAmbience() {
     const audio = audioRef.current
     if (!audio) return
+    audio.timers.forEach(timer => window.clearInterval(timer))
     audio.nodes.forEach(node => { try { node.stop() } catch { /* already stopped */ } })
     void audio.context.close()
     audioRef.current = null
@@ -251,25 +264,39 @@ export default function App() {
     gain.gain.value = volume
     gain.connect(context.destination)
     const nodes: AudioScheduledSourceNode[] = []
-    if (ambience === 'rain') {
-      const buffer = context.createBuffer(1, context.sampleRate * 3, context.sampleRate)
-      const data = buffer.getChannelData(0)
-      let last = 0
-      for (let i = 0; i < data.length; i++) { const white = Math.random() * 2 - 1; last = last * .96 + white * .04; data[i] = last * 2.4 }
-      const source = context.createBufferSource()
+    const timers: number[] = []
+    if (ambience === 'pad') {
       const filter = context.createBiquadFilter()
-      source.buffer = buffer; source.loop = true; filter.type = 'bandpass'; filter.frequency.value = 900; filter.Q.value = .25
-      source.connect(filter).connect(gain); source.start(); nodes.push(source)
-    } else {
-      const chord = [196, 246.94, 293.66]
+      const toneGain = context.createGain()
+      filter.type = 'lowpass'; filter.frequency.value = 850; filter.Q.value = .6
+      toneGain.gain.value = .16
+      filter.connect(toneGain).connect(gain)
+
+      const lfo = context.createOscillator(); const lfoDepth = context.createGain()
+      lfo.frequency.value = .08; lfoDepth.gain.value = .045
+      lfo.connect(lfoDepth).connect(toneGain.gain); lfo.start(); nodes.push(lfo)
+
+      const chord = [174.61, 220, 261.63, 329.63]
       chord.forEach((frequency, index) => {
-        const oscillator = context.createOscillator(); const toneGain = context.createGain()
-        oscillator.type = index === 0 ? 'sine' : 'triangle'; oscillator.frequency.value = frequency
-        toneGain.gain.value = index === 0 ? .16 : .07
-        oscillator.connect(toneGain).connect(gain); oscillator.start(); nodes.push(oscillator)
+        const oscillator = context.createOscillator(); const voiceGain = context.createGain()
+        oscillator.type = index < 2 ? 'sine' : 'triangle'; oscillator.frequency.value = frequency; oscillator.detune.value = index % 2 ? -5 : 4
+        voiceGain.gain.value = index === 0 ? .3 : .14
+        oscillator.connect(voiceGain).connect(filter); oscillator.start(); nodes.push(oscillator)
       })
+    } else {
+      const notes = [523.25, 659.25, 783.99, 987.77]
+      let noteIndex = 0
+      const playChime = () => {
+        const now = context.currentTime
+        const oscillator = context.createOscillator(); const chimeGain = context.createGain()
+        oscillator.type = 'sine'; oscillator.frequency.value = notes[noteIndex % notes.length]; noteIndex += 1
+        chimeGain.gain.setValueAtTime(.0001, now); chimeGain.gain.exponentialRampToValueAtTime(.13, now + .04); chimeGain.gain.exponentialRampToValueAtTime(.0001, now + 2.8)
+        oscillator.connect(chimeGain).connect(gain); oscillator.start(now); oscillator.stop(now + 3); nodes.push(oscillator)
+      }
+      playChime()
+      timers.push(window.setInterval(playChime, 6500))
     }
-    audioRef.current = { context, gain, nodes }
+    audioRef.current = { context, gain, nodes, timers }
   }
 
   function toggleTimer() {
@@ -332,7 +359,7 @@ export default function App() {
                 <button className="check" aria-label={task.done ? 'Mark incomplete' : 'Mark complete'} onClick={() => toggleTask(quest.id, task.id)}>{task.done ? <Check size={15}/> : <Circle size={18}/>}</button>
                 <div className="task-content">{editingTaskId === task.id ? <input autoFocus value={task.title} aria-label="Edit task title" onChange={e => updateTask(quest.id, task.id, e.target.value)} onBlur={() => setEditingTaskId(null)} onKeyDown={e => { if (e.key === 'Enter') setEditingTaskId(null) }}/> : <strong>{task.title}</strong>}<span>{task.minutes ?? 25} min · {(task.sessions ?? 1) === 1 ? `1 focus session` : `${task.sessions} focus sessions`}</span></div><span className="task-points">+{task.points}</span><button className="edit-task" aria-label={`Edit ${task.title}`} onClick={() => setEditingTaskId(task.id)}><Edit3 size={14}/></button>
               </div>)}</div>
-              <div className="optional-edit"><span>Plan ready as-is · editing is optional</span><button className="add-task" onClick={() => addTask(quest.id)}><Plus size={16}/> Add a step</button></div>
+              <div className="optional-edit"><span>Plan ready as-is · editing is optional</span><div><button className="delete-quest" onClick={() => deleteQuest(quest)}><Trash2 size={14}/> Delete quest</button><button className="add-task" onClick={() => addTask(quest.id)}><Plus size={16}/> Add a step</button></div></div>
             </article>
           })}</div>}
         </section>
@@ -349,7 +376,7 @@ export default function App() {
             <div className="ambience-panel">
               <label htmlFor="ambience"><Music2 size={15}/> Focus sound</label>
               <select id="ambience" value={ambience} onChange={e => { stopAmbience(); setAmbience(e.target.value as Ambience) }} disabled={timerRunning}>
-                <option value="none">Quiet</option><option value="rain">Gentle rain</option><option value="instrumental">Soft instrumental</option>
+                <option value="none">Quiet</option><option value="pad">Warm ambient pad</option><option value="chimes">Sparse soft chimes</option>
               </select>
               <label className="volume-control" aria-label="Ambience volume"><Volume2 size={15}/><input type="range" min="0" max="0.7" step="0.01" value={volume} onChange={e => setVolume(Number(e.target.value))}/></label>
             </div>
@@ -365,7 +392,7 @@ export default function App() {
             const claimed = claimedRewards.includes(reward.points)
             const Icon = reward.icon
             const celebrating = celebratingReward === reward.points
-            return <article className={`reward-card ${unlocked ? 'unlocked' : ''} ${celebrating ? 'celebrating' : ''}`} key={reward.points}>{celebrating && <div className="celebration" aria-hidden="true">{[0,1,2,3,4,5].map(i => <i key={i}/>)}</div>}<div className="reward-icon"><Icon size={22}/></div><div><span>{reward.points} points</span><h3>{reward.title}</h3><p>{celebrating ? 'A gentle pause, well earned.' : reward.note}</p></div>{unlocked && <button onClick={() => claimReward(reward.points)} disabled={claimed}>{claimed ? <><Check size={13}/> Reward enjoyed</> : 'Mark enjoyed'}</button>}</article>
+            return <article className={`reward-card ${unlocked ? 'unlocked' : ''} ${celebrating ? 'celebrating' : ''}`} key={reward.points}>{celebrating && <div className="celebration" aria-hidden="true">{Array.from({length:10},(_,i) => <i key={i}/>)}</div>}<div className="reward-icon"><Icon size={22}/></div><div><span>{reward.points} points</span><h3>{reward.title}</h3><p>{celebrating ? 'A gentle pause, well earned.' : reward.note}</p></div>{unlocked && <button onClick={() => claimReward(reward.points)} disabled={claimed}>{claimed ? <><Check size={13}/> Reward enjoyed</> : 'Mark enjoyed'}</button>}</article>
           })}</div>
           {nextReward && <p className="next-reward">Only <strong>{nextReward.points - points} points</strong> until “{nextReward.title}”.</p>}
         </section>

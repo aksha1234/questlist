@@ -12,7 +12,7 @@ The AI provider runs only in the Node server. The API key and model name are rea
 
 ## Focus audio
 
-The optional gentle-rain and soft-instrumental ambience is synthesized in the browser with the Web Audio API—no audio files are downloaded. Audio starts only after the user presses **Begin focus**, stops on pause/reset/completion, and remembers the selected ambience and volume locally.
+The optional warm ambient pad and sparse soft chimes are synthesized in the browser with the Web Audio API—no audio files or noise tracks are downloaded or streamed. Quiet is the default. Audio starts only after the user presses **Begin focus**, stops on pause/reset/completion, and remembers the selected sound and volume locally.
 
 ## Run locally
 
