@@ -164,6 +164,7 @@ export default function App() {
   const [ambience, setAmbience] = useState<Ambience>(initial.ambience)
   const [volume, setVolume] = useState(initial.volume)
   const timerRef = useRef<number | null>(null)
+  const sessionAwardedRef = useRef(false)
   const audioRef = useRef<{ context: AudioContext; gain: GainNode; nodes: AudioScheduledSourceNode[]; timers: number[] } | null>(null)
 
   useEffect(() => {
@@ -183,7 +184,10 @@ export default function App() {
           setTimerRunning(false)
           stopAmbience()
           setTimerComplete(true)
-          setPoints(p => p + 15)
+          if (!sessionAwardedRef.current) {
+            sessionAwardedRef.current = true
+            setPoints(p => p + 15)
+          }
           return 0
         }
         return value - 1
@@ -214,13 +218,12 @@ export default function App() {
   }
 
   function toggleTask(questId: string, taskId: string) {
+    const task = quests.find(quest => quest.id === questId)?.tasks.find(item => item.id === taskId)
+    if (!task) return
     setQuests(current => current.map(q => q.id !== questId ? q : {
-      ...q, tasks: q.tasks.map(t => {
-        if (t.id !== taskId) return t
-        setPoints(p => Math.max(0, p + (t.done ? -t.points : t.points)))
-        return { ...t, done: !t.done }
-      })
+      ...q, tasks: q.tasks.map(t => t.id === taskId ? { ...t, done: !t.done } : t)
     }))
+    setPoints(current => Math.max(0, current + (task.done ? -task.points : task.points)))
   }
 
   function updateTask(questId: string, taskId: string, title: string) {
@@ -244,6 +247,7 @@ export default function App() {
 
   function resetTimer() {
     stopAmbience()
+    sessionAwardedRef.current = false
     setTimerRunning(false); setSeconds(FOCUS_MINUTES * 60); setTimerComplete(false)
   }
 
@@ -302,7 +306,7 @@ export default function App() {
   function toggleTimer() {
     if (seconds === 0) { resetTimer(); return }
     if (timerRunning) { stopAmbience(); setTimerRunning(false) }
-    else { startAmbience(); setTimerComplete(false); setTimerRunning(true) }
+    else { sessionAwardedRef.current = false; startAmbience(); setTimerComplete(false); setTimerRunning(true) }
   }
 
   function claimReward(threshold: number) {
