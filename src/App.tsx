@@ -316,6 +316,7 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      {celebratingReward && <div className="firework-overlay" aria-hidden="true"><div className="celebration-glow"/>{['one','two','three','four'].map(name => <div className={`firework-burst burst-${name}`} key={name}>{Array.from({length:12},(_,i) => <i key={i}/>)}</div>)}</div>}
       <header className="topbar">
         <a className="brand" href="#top" aria-label="QuestList home"><span className="brand-mark"><Leaf size={18}/></span>QuestList</a>
         <nav aria-label="Page sections"><a href="#quests">My quests</a><a href="#focus">Focus</a></nav>
@@ -392,7 +393,7 @@ export default function App() {
             const claimed = claimedRewards.includes(reward.points)
             const Icon = reward.icon
             const celebrating = celebratingReward === reward.points
-            return <article className={`reward-card ${unlocked ? 'unlocked' : ''} ${celebrating ? 'celebrating' : ''}`} key={reward.points}>{celebrating && <div className="celebration" aria-hidden="true">{Array.from({length:10},(_,i) => <i key={i}/>)}</div>}<div className="reward-icon"><Icon size={22}/></div><div><span>{reward.points} points</span><h3>{reward.title}</h3><p>{celebrating ? 'A gentle pause, well earned.' : reward.note}</p></div>{unlocked && <button onClick={() => claimReward(reward.points)} disabled={claimed}>{claimed ? <><Check size={13}/> Reward enjoyed</> : 'Mark enjoyed'}</button>}</article>
+            return <article className={`reward-card ${unlocked ? 'unlocked' : ''} ${celebrating ? 'celebrating' : ''}`} key={reward.points}><div className="reward-icon"><Icon size={22}/></div><div><span>{reward.points} points</span><h3>{reward.title}</h3><p>{celebrating ? 'A gentle pause, well earned.' : reward.note}</p></div>{unlocked && <button onClick={() => claimReward(reward.points)} disabled={claimed}>{claimed ? <><Check size={13}/> Reward enjoyed</> : 'Mark enjoyed'}</button>}</article>
           })}</div>
           {nextReward && <p className="next-reward">Only <strong>{nextReward.points - points} points</strong> until “{nextReward.title}”.</p>}
         </section>
