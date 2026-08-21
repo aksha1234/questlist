@@ -16,7 +16,7 @@ The optional warm ambient pad and sparse soft chimes are synthesized in the brow
 
 ## Run locally
 
-Prerequisites: [Node.js](https://nodejs.org/) 18 or newer and npm.
+Prerequisites: [Node.js](https://nodejs.org/) 20.11 or newer and npm.
 
 ```bash
 npm install
@@ -37,7 +37,19 @@ npm run dev
 
 ```bash
 npm run build
-npm run preview
+npm start
 ```
 
-The compiled site is written to `dist/`.
+The compiled site is written to `dist/`. `npm start` runs one Express process that serves both the frontend and `/api/*`, binds to `0.0.0.0`, and uses the platform-provided `PORT` when present.
+
+## Deploy on Render
+
+The included `render.yaml` defines QuestList as one Node web service.
+
+1. Push this repository to GitHub and, in Render, choose **New → Blueprint**.
+2. Connect the repository and apply the detected Blueprint.
+3. Enter `OPENAI_API_KEY` when Render prompts for the secret. It is stored only in the server environment.
+4. Optionally change `OPENAI_MODEL`; the Blueprint defaults to `gpt-4o-mini`.
+5. Deploy and check `/api/health`. A healthy configured service reports `ok: true` and `aiConfigured: true` without revealing the key.
+
+Render runs `npm ci && npm run build`, then `npm start`. Do not add `VITE_`-prefixed secrets: Vite variables are browser-visible. The app still uses its clearly labeled offline planner if AI configuration is absent or temporarily unavailable.

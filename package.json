@@ -3,12 +3,16 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=20.11"
+  },
   "scripts": {
     "dev": "concurrently -k -n web,api -c green,blue \"npm:dev:web\" \"npm:dev:api\"",
     "dev:web": "vite",
     "dev:api": "node --watch server/index.js",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
+    "start": "node server/index.js",
     "start:api": "node server/index.js"
   },
   "dependencies": {

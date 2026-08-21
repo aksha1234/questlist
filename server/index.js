@@ -3,12 +3,20 @@ import express from 'express'
 import OpenAI from 'openai'
 import { zodTextFormat } from 'openai/helpers/zod'
 import { z } from 'zod'
+import { existsSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const app = express()
-const port = Number(process.env.QUESTLIST_API_PORT || 8787)
+const port = Number(process.env.PORT || process.env.QUESTLIST_API_PORT || 8787)
+const host = process.env.HOST || '0.0.0.0'
 const model = process.env.OPENAI_MODEL || 'gpt-4o-mini'
+const serverDirectory = dirname(fileURLToPath(import.meta.url))
+const distDirectory = join(serverDirectory, '..', 'dist')
+const indexFile = join(distDirectory, 'index.html')
 
 app.disable('x-powered-by')
+app.set('trust proxy', 1)
 app.use(express.json({ limit: '16kb' }))
 
 const requestSchema = z.object({
@@ -78,13 +86,24 @@ app.post('/api/plan', async (req, res) => {
 
 app.get('/api/health', (_req, res) => res.json({ ok: true, aiConfigured: Boolean(process.env.OPENAI_API_KEY) }))
 
+if (existsSync(indexFile)) {
+  app.use(express.static(distDirectory, { index: false }))
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' || req.path.startsWith('/api/')) return next()
+    return res.sendFile(indexFile)
+  })
+}
+
+app.use('/api', (_req, res) => res.status(404).json({ error: 'API route not found.' }))
+
 app.use((error, _req, res, _next) => {
   if (error instanceof SyntaxError) return res.status(400).json({ error: 'Invalid JSON request.' })
   console.error('Server error:', error instanceof Error ? error.message : 'Unknown error')
   return res.status(500).json({ error: 'Unexpected server error.' })
 })
 
-app.listen(port, '127.0.0.1', () => {
-  console.log(`QuestList API ready at http://127.0.0.1:${port}`)
+app.listen(port, host, () => {
+  console.log(`QuestList server ready at http://${host}:${port}`)
+  console.log(existsSync(indexFile) ? 'Serving the production frontend from dist' : 'Frontend build not found; API-only development mode')
   console.log(process.env.OPENAI_API_KEY ? `AI planning enabled (${model})` : 'AI planning not configured; the app will use its labeled offline fallback')
 })
